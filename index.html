@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>2-Way Audio WebRTC Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background: #2b2b2b;
+            color: #fff;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 2rem;
+        }
+        video {
+            background: #000;
+            max-width: 800px;
+            width: 100%;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+        }
+        .controls {
+            margin-top: 1rem;
+            display: flex;
+            gap: 1rem;
+        }
+        button {
+            padding: 15px 30px;
+            font-size: 1.2rem;
+            border: none;
+            border-radius: 25px;
+            cursor: pointer;
+            font-weight: bold;
+            transition: background-color 0.2s;
+        }
+        #talk-btn {
+            background-color: #4CAF50;
+            color: white;
+        }
+        #talk-btn:disabled {
+            background-color: #555;
+            color: #aaa;
+            cursor: not-allowed;
+        }
+        #talk-btn.active {
+            background-color: #f44336;
+        }
+    </style>
+</head>
+<body>
+
+    <h2>WebRTC 2-Way Audio (Mock Camera)</h2>
+    <!-- Muted is usually required for autoplay to work in browsers -->
+    <video id="video" autoplay playsinline muted controls></video>
+    
+    <div class="controls">
+        <button id="talk-btn" disabled>Allow Mic to Talk...</button>
+    </div>
+    
+    <p><small>Note: This simulates the frontend component you'd embed inside Home Assistant.</small></p>
+
+    <script>
+        const video = document.getElementById('video');
+        const talkBtn = document.getElementById('talk-btn');
+        let pc = new RTCPeerConnection();
+        let localStream = null;
+
+        // When we receive the camera's stream from go2rtc, attach it to the video tag
+        pc.ontrack = event => {
+            if (event.streams && event.streams[0]) {
+                video.srcObject = event.streams[0];
+            }
+        };
+
+        async function startStream() {
+            // Tell go2rtc we want to receive video and audio from the camera
+            pc.addTransceiver('video', { direction: 'recvonly' });
+
+            try {
+                // Request microphone access from the user's browser
+                localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                
+                localStream.getAudioTracks().forEach(track => {
+                    // Mute our mic by default so we don't hot-mic immediately
+                    track.enabled = false; 
+                    
+                    // Add our mic track to the WebRTC connection being sent to the camera
+                    pc.addTrack(track, localStream);
+                });
+                
+                talkBtn.disabled = false;
+                talkBtn.textContent = 'Push and Hold to Talk';
+            } catch (e) {
+                console.error("Microphone access denied or error:", e);
+                talkBtn.textContent = 'Mic Access Denied';
+                return;
+            }
+
+            // Create WebRTC Offer
+            const offer = await pc.createOffer();
+            await pc.setLocalDescription(offer);
+
+            // Connect to our local go2rtc API
+            // Usually, inside HA, the URL would be to the HA WebRTC integration endpoints
+            const url = new URL('/api/webrtc', 'http://localhost:1984');
+            url.searchParams.set('src', 'mock_unifi'); // Our docker-compose stream name
+
+            // Send local SDP to go2rtc
+            const response = await fetch(url, {
+                method: 'POST',
+                body: pc.localDescription.sdp,
+                headers: { 'Content-Type': 'application/sdp' }
+            });
+
+            // Apply incoming SDP answer from go2rtc
+            const answerSdp = await response.text();
+            const answer = new RTCSessionDescription({ type: 'answer', sdp: answerSdp });
+            await pc.setRemoteDescription(answer);
+        }
+
+        // --- Push To Talk Logic ---
+        
+        // Mousedown / Touchstart turns on the mic track
+        const startTalking = () => {
+            if (!localStream) return;
+            localStream.getAudioTracks().forEach(t => t.enabled = true);
+            talkBtn.classList.add('active');
+            talkBtn.textContent = '🎤 Recording...';
+        };
+
+        // Mouseup / Touchend turns off the mic track
+        const stopTalking = () => {
+            if (!localStream) return;
+            localStream.getAudioTracks().forEach(t => t.enabled = false);
+            talkBtn.classList.remove('active');
+            talkBtn.textContent = 'Push and Hold to Talk';
+        };
+
+        talkBtn.addEventListener('mousedown', startTalking);
+        talkBtn.addEventListener('touchstart', startTalking);
+        
+        talkBtn.addEventListener('mouseup', stopTalking);
+        talkBtn.addEventListener('mouseleave', stopTalking); // Safety if cursor drags off button
+        talkBtn.addEventListener('touchend', stopTalking);
+
+        // Init
+        startStream();
+    </script>
+</body>
+</html>

@@ -1,0 +1,17 @@
+streams:
+  # Mock camera with video (test pattern) and audio (sine wave)
+  # Uses ffmpeg to generate the dummy feed
+  mock_unifi:
+    - ffmpeg: -f lavfi -re -i testsrc=size=1280x720:rate=30 -f lavfi -re -i sine=frequency=440:beep_factor=4:sample_rate=8000 -c:v libx264 -preset veryfast -tune zerolatency -c:a pcmu -f rtsp {output}
+
+webrtc:
+  listen: ":8562"
+  candidates:
+    # Set this to your local machine's IP if WebRTC fails to connect 
+    # e.g., "192.168.1.50:8562"
+    - "stun:8562"
+
+log:
+  level: trace      # Set to trace for debugging 2-way audio issues
+  api: debug
+  webrtc: trace
